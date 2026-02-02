@@ -16,9 +16,9 @@ args = parser.parse_args()
 sample_names = args.samples.split(",")
 
 # -----------------------------
-# 2. Load CSV and remove header
+# 2. Load CSV and remove header row
 # -----------------------------
-df = pd.read_csv(args.file, header=None)  # ignore header row completely
+df = pd.read_csv(args.file, header=None, skiprows=1)  # skip first header row
 
 # -----------------------------
 # 3. Convert first column to minutes
@@ -34,9 +34,9 @@ def time_to_min(s):
 time = df.iloc[:, 0].apply(time_to_min).values
 
 # -----------------------------
-# 4. Extract sample data
+# 4. Extract numeric sample data
 # -----------------------------
-data = df.iloc[:, 1:].values.astype(float)  # all columns except time
+data = df.iloc[:, 1:].values.astype(float)
 
 # -----------------------------
 # 5. Normalize each column
@@ -73,9 +73,9 @@ time_trimmed = time[3:-3]
 # -----------------------------
 # 9. Export to CSV
 # -----------------------------
+# Make sure number of sample names matches columns
 if len(sample_names) != smoothed.shape[1]:
     print("Warning: number of sample names does not match number of columns after moving average!")
-    # truncate or pad
     if len(sample_names) > smoothed.shape[1]:
         sample_names = sample_names[:smoothed.shape[1]]
     else:
