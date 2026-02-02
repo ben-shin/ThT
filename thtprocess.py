@@ -90,7 +90,7 @@ if len(sample_names) != smoothed_trimmed.shape[1]:
     if len(sample_names) > smoothed_trimmed.shape[1]:
         sample_names = sample_names[:smoothed_trimmed.shape[1]]
     else:
-        sample_names += ["Sample{}".format{i} for i in range(smoothed_trimmed.shape[1] - len(sample_names))]
+        sample_names += ["Sample{}".format(i) for i in range(smoothed_trimmed.shape[1] - len(sample_names))]
 
 output_df = pd.DataFrame(smoothed_trimmed, columns=sample_names)
 output_df.insert(0, "Time_min", time_trimmed)
