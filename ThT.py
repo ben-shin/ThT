@@ -1,71 +1,78 @@
-import numpy as np
 import pandas as pd
+import numpy as np
 from scipy.signal import savgol_filter
 from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
+import re
 
 # -----------------------------
-# 1. Load your data
+# 1. Load Excel
 # -----------------------------
-# Example: Excel file with time in column A and triplicates in columns B-D
-# Replace 'your_file.xlsx' and sheet name
-df = pd.read_excel('ThT_DNAJB6.xlsx', sheet_name='Sheet1')
-
-time = df.iloc[:, 0].values          # Time column
-triplicates = df.iloc[:, 1:4].values # Columns B-D
+df = pd.read_excel("your_file.xlsx")  # header row assumed
 
 # -----------------------------
-# 2. Normalize each triplicate
+# 2. Convert time column to minutes
 # -----------------------------
-# Normalization: (F - F0) / (Fmax - F0)
-F0 = triplicates[:, 0][:, np.newaxis]   # baseline per well
-Fmax = triplicates.max(axis=0)          # max per well
+def time_to_min(s):
+    match = re.match(r"(\d+)\s*h\s*(\d*)\s*min?", s)
+    if match:
+        h = int(match.group(1))
+        m = int(match.group(2)) if match.group(2) else 0
+        return h*60 + m
+    return np.nan
 
-norm = (triplicates - F0) / (Fmax - F0)
-
-# -----------------------------
-# 3. Average the triplicates
-# -----------------------------
-avg_curve = np.mean(norm, axis=1)
-std_curve = np.std(norm, axis=1)
+time = df.iloc[:, 0].apply(time_to_min).values
 
 # -----------------------------
-# 4. Optional: Savitzky-Golay smoothing
+# 3. Extract sample data
 # -----------------------------
-# window_length must be odd and <= len(time)
-window_length = 11  # adjust depending on sampling
-polyorder = 2
-smoothed = savgol_filter(avg_curve, window_length, polyorder)
+data = df.iloc[:, 1:].values.astype(float)  # all columns except Time
 
 # -----------------------------
-# 5. Sigmoidal (Boltzmann) function
+# 4. Define Boltzmann fit
 # -----------------------------
 def boltzmann(t, y0, ymax, k, t_half):
     return y0 + (ymax - y0) / (1 + np.exp(-k * (t - t_half)))
 
-# Initial parameter guesses
-p0 = [0, 1, 0.1, np.median(time)]
-
-# Fit the smoothed curve
-params, cov = curve_fit(boltzmann, time, smoothed, p0=p0)
-
-y0_fit, ymax_fit, k_fit, t_half_fit = params
-
-print(f"Baseline (y0): {y0_fit:.3f}")
-print(f"Plateau (ymax): {ymax_fit:.3f}")
-print(f"Rate constant (k): {k_fit:.3f}")
-print(f"Half-time (t1/2): {t_half_fit:.2f} min")
-
 # -----------------------------
-# 6. Plot results
+# 5. Process triplicates (example: every 3 columns is a set)
 # -----------------------------
-plt.figure(figsize=(8,5))
-plt.plot(time, avg_curve, 'o', label='Averaged data', alpha=0.5)
-plt.plot(time, smoothed, '-', label='Smoothed')
-plt.plot(time, boltzmann(time, *params), '--', label='Boltzmann fit')
-plt.fill_between(time, avg_curve - std_curve, avg_curve + std_curve, color='gray', alpha=0.2)
-plt.xlabel('Time (min)')
-plt.ylabel('Normalized ThT fluorescence')
+results = []
+
+num_replicates = 3
+for i in range(0, data.shape[1], num_replicates):
+    trip = data[:, i:i+num_replicates]
+    
+    # Normalize each well
+    F0 = trip[0, :]
+    Fmax = trip.max(axis=0)
+    norm = (trip - F0) / (Fmax - F0)
+    
+    # Average triplicates
+    avg_curve = norm.mean(axis=1)
+    
+    # Smooth
+    window_length = 11 if len(avg_curve) >= 11 else len(avg_curve)//2*2+1
+    smoothed = savgol_filter(avg_curve, window_length, 2)
+    
+    # Fit
+    p0 = [0, 1, 0.1, np.median(time)]
+    params, _ = curve_fit(boltzmann, time, smoothed, p0=p0, maxfev=5000)
+    
+    results.append(params)
+    
+    # Optional plot
+    plt.plot(time, avg_curve, 'o', alpha=0.3)
+    plt.plot(time, smoothed, '-', label=f'Set {i//num_replicates + 1}')
+    plt.plot(time, boltzmann(time, *params), '--')
+
+plt.xlabel("Time (min)")
+plt.ylabel("Normalized ThT fluorescence")
 plt.legend()
-plt.tight_layout()
 plt.show()
+
+# -----------------------------
+# 6. Compile results
+# -----------------------------
+results_df = pd.DataFrame(results, columns=['y0','ymax','k','t_half'])
+print(results_df)
