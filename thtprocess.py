@@ -96,4 +96,4 @@ output_df = pd.DataFrame(smoothed_trimmed, columns=sample_names)
 output_df.insert(0, "Time_min", time_trimmed)
 output_file = "processed_tht.csv"
 output_df.to_csv(output_file, index=False)
-print(f"Processed data saved to {}".format(output_file))
+print("Processed data saved to {}".format(output_file))
