@@ -7,7 +7,7 @@ import argparse
 # -----------------------------
 # 1. Argument parser
 # -----------------------------
-parser = argparse.ArgumentParser(description="Fit ThT processed CSV to sigmoidal curves")
+parser = argparse.ArgumentParser(description="Fit ThT data to sigmoidal curve")
 parser.add_argument("--file", required=True, help="Path to processed CSV file")
 parser.add_argument("--samples", required=True, help="Comma-separated sample names")
 args = parser.parse_args()
@@ -20,72 +20,53 @@ sample_names = args.samples.split(",")
 df = pd.read_csv(args.file)
 
 # -----------------------------
-# 3. Define sigmoidal function
+# 3. Drop rows with NaNs in Time_min or sample columns
 # -----------------------------
-def sigmoid(x, A, B, x0, k):
-    """
-    A: min
-    B: max - min
-    x0: midpoint
-    k: slope
-    """
-    return A + B / (1 + np.exp(-(x - x0) / k))
+all_cols_to_check = ["Time_min"] + sample_names
+df_clean = df.dropna(subset=all_cols_to_check)
+dropped_rows = len(df) - len(df_clean)
+if dropped_rows > 0:
+    print(f"Dropped {dropped_rows} rows containing NaNs in Time_min or sample columns.")
 
 # -----------------------------
-# 4. Prepare x values (time)
+# 4. Define sigmoidal function (Boltzmann)
 # -----------------------------
-x = df.iloc[:, 0].values  # first column is Time_min
+def boltzmann(x, A1, A2, x0, dx):
+    return A2 + (A1 - A2) / (1 + np.exp((x - x0) / dx))
 
 # -----------------------------
 # 5. Fit each column
 # -----------------------------
 results = []
-skipped_samples = []
+time = df_clean["Time_min"].values
 
 for col_name in sample_names:
-    if col_name not in df.columns:
-        print(f"Column {col_name} not found in CSV. Skipping.")
-        skipped_samples.append(col_name)
+    y = df_clean[col_name].values
+
+    # Skip entirely empty columns
+    if np.all(np.isnan(y)):
+        print(f"Skipping {col_name}: all values are NaN")
         continue
 
-    y = df[col_name].values
-
-    # Skip if all zeros or constant array
-    if np.all(y == 0) or np.all(y == y[0]):
-        print(f"Skipping {col_name}: no signal or constant array")
-        skipped_samples.append(col_name)
-        continue
-
-    # Initial guess: min, max-min, midpoint, slope
-    A0 = np.min(y)
-    B0 = np.max(y) - A0
-    x0 = x[np.argmax(np.diff(y))] if np.any(np.diff(y)) else np.median(x)
-    k0 = 1.0
-    p0 = [A0, B0, x0, k0]
+    # Initial guesses
+    p0 = [y.max(), y.min(), time[len(time)//2], 1.0]
 
     try:
-        params, cov = curve_fit(sigmoid, x, y, p0=p0, maxfev=10000)
-        perr = np.sqrt(np.diag(cov))  # standard errors
+        params, cov = curve_fit(boltzmann, time, y, p0=p0, maxfev=5000)
+        errors = np.sqrt(np.diag(cov))
         results.append({
             "Sample": col_name,
-            "A": params[0], "A_err": perr[0],
-            "B": params[1], "B_err": perr[1],
-            "x0": params[2], "x0_err": perr[2],
-            "k": params[3], "k_err": perr[3]
+            "A1": params[0], "A1_err": errors[0],
+            "A2": params[1], "A2_err": errors[1],
+            "x0": params[2], "x0_err": errors[2],
+            "dx": params[3], "dx_err": errors[3]
         })
-        print(f"Fit successful for {col_name}")
     except Exception as e:
         print(f"Fit failed for {col_name}: {e}")
-        skipped_samples.append(col_name)
 
 # -----------------------------
-# 6. Save results
+# 6. Export fitting results
 # -----------------------------
-if results:
-    out_df = pd.DataFrame(results)
-    out_file = "tht_fit_results.csv"
-    out_df.to_csv(out_file, index=False)
-    print(f"Fitting results saved to {out_file}")
-
-if skipped_samples:
-    print(f"Skipped samples ({len(skipped_samples)}): {', '.join(skipped_samples)}")
+results_df = pd.DataFrame(results)
+results_df.to_csv("tht_fit_results.csv", index=False)
+print("Fitting results saved to tht_fit_results.csv")
