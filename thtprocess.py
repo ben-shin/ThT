@@ -82,8 +82,9 @@ else:
     time_trimmed = time[trim:-trim]
 
 # Replace NaNs with 0 and clip negative values
-smoothed_trimmed = np.nan_to_num(smoothed_trimmed)  # convert NaNs to 0
+smoothed_trimmed = np.nan_to_num(smoothed_trimmed, nan=0.0, posinf=0.0, neginf=0.0)  # convert NaNs to 0
 smoothed_trimmed[smoothed_trimmed < 0] = 0          # clip negatives
+smooth_trimmed[smoothed_trimmed > 1] = 1
 
 # -----------------------------
 # 9. Export to CSV
