@@ -1,18 +1,27 @@
+#!/usr/bin/env python3
 import pandas as pd
 import numpy as np
 from scipy.signal import savgol_filter
-from scipy.optimize import curve_fit
-import matplotlib.pyplot as plt
+import argparse
 import re
 
 # -----------------------------
-# 1. Load CSV
+# 1. Argument parser
 # -----------------------------
-# Replace 'ThT_DNAJB6.csv' with your file path
-df = pd.read_csv("ThT_DNAJB6.csv")
+parser = argparse.ArgumentParser(description="Process ThT CSV data")
+parser.add_argument("--file", required=True, help="Path to CSV file")
+parser.add_argument("--samples", required=True, help="Comma-separated sample names")
+args = parser.parse_args()
+
+sample_names = args.samples.split(",")
 
 # -----------------------------
-# 2. Convert time column to minutes
+# 2. Load CSV and remove header
+# -----------------------------
+df = pd.read_csv(args.file, header=None)  # ignore header row completely
+
+# -----------------------------
+# 3. Convert first column to minutes
 # -----------------------------
 def time_to_min(s):
     match = re.match(r"(\d+)\s*h\s*(\d*)\s*min?", str(s))
@@ -25,56 +34,55 @@ def time_to_min(s):
 time = df.iloc[:, 0].apply(time_to_min).values
 
 # -----------------------------
-# 3. Extract sample data
+# 4. Extract sample data
 # -----------------------------
-data = df.iloc[:, 1:].values.astype(float)  # all columns except Time
+data = df.iloc[:, 1:].values.astype(float)  # all columns except time
 
 # -----------------------------
-# 4. Define Boltzmann fit
+# 5. Normalize each column
 # -----------------------------
-def boltzmann(t, y0, ymax, k, t_half):
-    return y0 + (ymax - y0) / (1 + np.exp(-k * (t - t_half)))
+F0 = data[0, :]
+Fmax = data.max(axis=0)
+denom = Fmax - F0
+denom[denom == 0] = 1  # avoid divide by zero
+norm = (data - F0) / denom
 
 # -----------------------------
-# 5. Process triplicates (every 3 columns = one set)
+# 6. Moving window average (3 columns)
 # -----------------------------
-results = []
-
 num_replicates = 3
-for i in range(0, data.shape[1], num_replicates):
-    trip = data[:, i:i+num_replicates]
-    
-    # Normalize each well individually
-    F0 = trip[0, :]
-    Fmax = trip.max(axis=0)
-    norm = (trip - F0) / (Fmax - F0)
-    
-    # Average triplicates
-    avg_curve = norm.mean(axis=1)
-    
-    # Smooth
-    window_length = 11 if len(avg_curve) >= 11 else len(avg_curve)//2*2+1
-    smoothed = savgol_filter(avg_curve, window_length, 2)
-    
-    # Fit Boltzmann
-    p0 = [0, 1, 0.1, np.median(time)]
-    params, _ = curve_fit(boltzmann, time, smoothed, p0=p0, maxfev=5000)
-    
-    results.append(params)
-    
-    # Optional plot
-    plt.plot(time, avg_curve, 'o', alpha=0.3)
-    plt.plot(time, smoothed, '-', label=f'Set {i//num_replicates + 1}')
-    plt.plot(time, boltzmann(time, *params), '--')
+num_windows = norm.shape[1] - num_replicates + 1
+avg_windows = np.zeros((norm.shape[0], num_windows))
 
-plt.xlabel("Time (min)")
-plt.ylabel("Normalized ThT fluorescence")
-plt.legend()
-plt.tight_layout()
-plt.show()
+for i in range(num_windows):
+    avg_windows[:, i] = norm[:, i:i+num_replicates].mean(axis=1)
 
 # -----------------------------
-# 6. Compile results
+# 7. Savitzky-Golay filter
 # -----------------------------
-results_df = pd.DataFrame(results, columns=['y0','ymax','k','t_half'])
-print(results_df)
+window_length = 7  # must be odd
+polyorder = 2
+smoothed = savgol_filter(avg_windows, window_length=window_length, polyorder=polyorder, axis=0)
+
+# -----------------------------
+# 8. Remove first and last 3 time points
+# -----------------------------
+smoothed = smoothed[3:-3, :]
+time_trimmed = time[3:-3]
+
+# -----------------------------
+# 9. Export to CSV
+# -----------------------------
+if len(sample_names) != smoothed.shape[1]:
+    print("Warning: number of sample names does not match number of columns after moving average!")
+    # truncate or pad
+    if len(sample_names) > smoothed.shape[1]:
+        sample_names = sample_names[:smoothed.shape[1]]
+    else:
+        sample_names += [f"Sample{i}" for i in range(smoothed.shape[1] - len(sample_names))]
+
+output_df = pd.DataFrame(smoothed, columns=sample_names)
+output_df.insert(0, "Time_min", time_trimmed)
+output_file = "processed_tht.csv"
+output_df.to_csv(output_file, index=False)
+print(f"Processed data saved to {output_file}")
