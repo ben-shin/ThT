@@ -5,68 +5,87 @@ from scipy.optimize import curve_fit
 import argparse
 
 # -----------------------------
-# Sigmoid function (Boltzmann)
+# 1. Argument parser
 # -----------------------------
-def boltzmann(t, Fmin, Fmax, t_half, k):
-    return Fmin + (Fmax - Fmin) / (1 + np.exp(-(t - t_half)/k))
-
-# -----------------------------
-# Argument parser
-# -----------------------------
-parser = argparse.ArgumentParser(description="Fit ThT CSV data to sigmoidal curves")
-parser.add_argument("--file", required=True, help="Path to CSV file")
+parser = argparse.ArgumentParser(description="Fit ThT processed CSV to sigmoidal curves")
+parser.add_argument("--file", required=True, help="Path to processed CSV file")
 parser.add_argument("--samples", required=True, help="Comma-separated sample names")
 args = parser.parse_args()
 
 sample_names = args.samples.split(",")
 
 # -----------------------------
-# Load CSV
+# 2. Load CSV
 # -----------------------------
 df = pd.read_csv(args.file)
-time = df.iloc[:, 0].values  # first column is time
-data = df.iloc[:, 1:].values  # the sample columns
 
 # -----------------------------
-# Prepare results storage
+# 3. Define sigmoidal function
+# -----------------------------
+def sigmoid(x, A, B, x0, k):
+    """
+    A: min
+    B: max - min
+    x0: midpoint
+    k: slope
+    """
+    return A + B / (1 + np.exp(-(x - x0) / k))
+
+# -----------------------------
+# 4. Prepare x values (time)
+# -----------------------------
+x = df.iloc[:, 0].values  # first column is Time_min
+
+# -----------------------------
+# 5. Fit each column
 # -----------------------------
 results = []
+skipped_samples = []
 
-# -----------------------------
-# Fit each column
-# -----------------------------
-for i, col_name in enumerate(df.columns[1:]):
-    y = data[:, i]
-
-    # Skip columns with no variation
-    if np.all(np.isnan(y)) or np.ptp(y) < 1e-8:
-        print(f"Skipping column {col_name}: no variation")
+for col_name in sample_names:
+    if col_name not in df.columns:
+        print(f"Column {col_name} not found in CSV. Skipping.")
+        skipped_samples.append(col_name)
         continue
 
-    # Initial guess for parameters
-    Fmin_guess = np.min(y)
-    Fmax_guess = np.max(y)
-    t_half_guess = time[np.argmax(y >= (Fmax_guess + Fmin_guess)/2)]
-    k_guess = 1.0
-    p0 = [Fmin_guess, Fmax_guess, t_half_guess, k_guess]
+    y = df[col_name].values
+
+    # Skip if all zeros or constant array
+    if np.all(y == 0) or np.all(y == y[0]):
+        print(f"Skipping {col_name}: no signal or constant array")
+        skipped_samples.append(col_name)
+        continue
+
+    # Initial guess: min, max-min, midpoint, slope
+    A0 = np.min(y)
+    B0 = np.max(y) - A0
+    x0 = x[np.argmax(np.diff(y))] if np.any(np.diff(y)) else np.median(x)
+    k0 = 1.0
+    p0 = [A0, B0, x0, k0]
 
     try:
-        params, cov = curve_fit(boltzmann, time, y, p0=p0, maxfev=5000)
+        params, cov = curve_fit(sigmoid, x, y, p0=p0, maxfev=10000)
         perr = np.sqrt(np.diag(cov))  # standard errors
         results.append({
             "Sample": col_name,
-            "Fmin": params[0], "Fmin_SE": perr[0],
-            "Fmax": params[1], "Fmax_SE": perr[1],
-            "t_half": params[2], "t_half_SE": perr[2],
-            "k": params[3], "k_SE": perr[3],
+            "A": params[0], "A_err": perr[0],
+            "B": params[1], "B_err": perr[1],
+            "x0": params[2], "x0_err": perr[2],
+            "k": params[3], "k_err": perr[3]
         })
-        print(f"Fitted {col_name}")
+        print(f"Fit successful for {col_name}")
     except Exception as e:
         print(f"Fit failed for {col_name}: {e}")
+        skipped_samples.append(col_name)
 
 # -----------------------------
-# Save results
+# 6. Save results
 # -----------------------------
-results_df = pd.DataFrame(results)
-results_df.to_csv("tht_fit_results.csv", index=False)
-print("Fitting results saved to tht_fit_results.csv")
+if results:
+    out_df = pd.DataFrame(results)
+    out_file = "tht_fit_results.csv"
+    out_df.to_csv(out_file, index=False)
+    print(f"Fitting results saved to {out_file}")
+
+if skipped_samples:
+    print(f"Skipped samples ({len(skipped_samples)}): {', '.join(skipped_samples)}")
